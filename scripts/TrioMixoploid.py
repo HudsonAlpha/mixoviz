@@ -1,6 +1,6 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 '''
-Usage: python TrioMixoploid.py -h
+Usage: python3 TrioMixoploid.py -h
 
 This script calculates the fraction of cells that are diploid under the assumption that it is a mixture of diploid/triploid cells and
 the extra copy is inherited from the maternal line.
@@ -10,31 +10,33 @@ import argparse as ap
 import numpy as np
 import os
 import sys
+import vcf
 
-import vcfutil
-
-def getFields(infoDict):
+def parseInfoField(var, sampleLabel):
     '''
     This function is just a helper to convert all the fields into an expected data type, and handle exceptions by setting to values
-    @param infoDict - the dictionary created from vcfutil.parseInfoField(...)
     @return - tuple (gt, gq, dp , ad)
         gt - genotype (str)
         gq - genotype quality (int)
         dp - total depth, sum(ad) (int)
         ad - allele depth (list of int)
     '''
-    gt = infoDict['GT']
+    gt = var.genotype(sampleLabel)['GT']
+    
+    #GQ is not a guaranteed field
     try:
-        gq = int(infoDict['GQ'])
+        gq = int(var.genotype(sampleLabel)['GQ'])
     except:
         gq = 0
+    
+    #AD is not a guaranteed field, so if it's absent set the depth to 0
     try:
-        ad = [int(x) for x in infoDict['AD'].split(',')]
-        dp = sum(ad)
+        ad = var.genotype(sampleLabel)['AD']
+        tot = sum(ad)
     except:
-        ad = []
-        dp = 0
-    return (gt, gq, dp, ad)
+        tot = 0
+    
+    return (gt, gq, tot, ad)
 
 def calculateRatio(ratio0011, ratio1100):
     '''
@@ -71,7 +73,11 @@ def calcTrioBiallelic(vcfFN, proband, father, mother, MIN_DEPTH, MIN_QUALITY):
     @param MIN_QUALITY - the minimum quality required by all variant calls to consider it
     '''
     #get the chromosomes we plan to go through
-    chromList = vcfutil.getVCFChroms(vcfFN)
+    vcfReader = vcf.Reader(filename=vcfFN, compressed=True)
+    chromList = vcfReader.contigs.keys()
+    for sampleLabel in [proband, father, mother]:
+        if (sampleLabel not in vcfReader.samples):
+            raise Exception('Missing required column "'+sampleLabel+'" in VCF file: '+fileName)
     
     #go through each chromosome gathering the alleles with each GT combination
     totalRef0011 = []
@@ -80,19 +86,19 @@ def calcTrioBiallelic(vcfFN, proband, father, mother, MIN_DEPTH, MIN_QUALITY):
     totalAlt1100 = []
     
     #header for everything
-    print '##COMMAND:'
-    print '##  python '+' '.join(sys.argv)
-    print '##PARAMETERS:'
-    print '##  MIN_DEPTH = at least '+str(MIN_DEPTH)+' reads to include variant'
-    print '##  MIN_QUALITY = at least '+str(MIN_QUALITY)+' quality score to include variant'
-    print '##chrom - the chromosome tested'
-    print '##diploid_frac - the fraction of cells that are diploid based on the mean statistics'
-    print '##triploid_frac - the fraction of cells that are triploid based on the mean statistics'
-    print '##e - the error value from the system using mean statistics, values greater than .01 may indicate an atypical sample'
-    print '##diploid_frac_median - the fraction of cells that are diploid based on the median statistics'
-    print '##triploid_frac_median - the fraction of cells that are triploid based on the median statistics'
-    print '##e_median - the error value from the system using median statistics, values greater than .01 may indicate an atypical sample'
-    print '#'+'\t'.join(['chrom', 'diploid_frac', 'triploid_frac', 'e', 'diploid_frac_median', 'triploid_frac_median', 'e_median'])
+    print('##COMMAND:')
+    print('##  python '+' '.join(sys.argv))
+    print('##PARAMETERS:')
+    print('##  MIN_DEPTH = at least '+str(MIN_DEPTH)+' reads to include variant')
+    print('##  MIN_QUALITY = at least '+str(MIN_QUALITY)+' quality score to include variant')
+    print('##chrom - the chromosome tested')
+    print('##diploid_frac - the fraction of cells that are diploid based on the mean statistics')
+    print('##triploid_frac - the fraction of cells that are triploid based on the mean statistics')
+    print('##e - the error value from the system using mean statistics, values greater than .01 may indicate an atypical sample')
+    print('##diploid_frac_median - the fraction of cells that are diploid based on the median statistics')
+    print('##triploid_frac_median - the fraction of cells that are triploid based on the median statistics')
+    print('##e_median - the error value from the system using median statistics, values greater than .01 may indicate an atypical sample')
+    print('#'+'\t'.join(['chrom', 'diploid_frac', 'triploid_frac', 'e', 'diploid_frac_median', 'triploid_frac_median', 'e_median']))
     
     #iterate through the VCF
     for chrom in chromList:
@@ -101,18 +107,19 @@ def calcTrioBiallelic(vcfFN, proband, father, mother, MIN_DEPTH, MIN_QUALITY):
             c = c[3:]
         
         #go through each variants
-        it = vcfutil.vcfIterator(vcfFN, chroms=[chrom], sampleLabels=[proband, father, mother])
+        try:
+            it = vcfReader.fetch(chrom)
+        except:
+            #print('Warning: missing data for chromosome "'+chrom+'"')
+            continue
+        
         dv = {}
         for var in it:
             #we only check bi-allelic SNPs
-            if len(var['REF']) == 1 and len(var['ALT']) == 1:
-                proInfo = vcfutil.parseInfoField(var['FORMAT'], var[proband])
-                patInfo = vcfutil.parseInfoField(var['FORMAT'], var[father])
-                matInfo = vcfutil.parseInfoField(var['FORMAT'], var[mother])
-                
-                proGT, proGQ, proDP, proAD = getFields(proInfo)
-                patGT, patGQ, patDP, patAD = getFields(patInfo)
-                matGT, matGQ, matDP, matAD = getFields(matInfo)
+            if len(var.REF) == 1 and len(var.ALT) == 1:
+                proGT, proGQ, proDP, proAD = parseInfoField(var, proband)
+                patGT, patGQ, patDP, patAD = parseInfoField(var, father)
+                matGT, matGQ, matDP, matAD = parseInfoField(var, mother)
                 
                 #make sure everything passes these user-set parameters
                 if (patGQ >= MIN_QUALITY and
@@ -124,7 +131,7 @@ def calcTrioBiallelic(vcfFN, proband, father, mother, MIN_DEPTH, MIN_QUALITY):
                     ((patGT == '0/0' and matGT == '1/1') or (patGT == '1/1' and matGT == '0/0'))):
                     
                     k = (patGT, matGT)
-                    if not dv.has_key(k):
+                    if not (k in dv):
                         dv[k] = [[], []]
                     dv[k][0].append(proAD[0])
                     dv[k][1].append(proAD[1])
@@ -135,7 +142,7 @@ def calcTrioBiallelic(vcfFN, proband, father, mother, MIN_DEPTH, MIN_QUALITY):
             r1100, a1100 = dv[('1/1', '0/0')]
         except:
             #one of these values doesn't exist, so we cannot perform the calculation
-            print '\t'.join([str(x) for x in [c]+['--']*6])
+            print('\t'.join([str(x) for x in [c]+['--']*6]))
             continue
         
         try:
@@ -165,7 +172,7 @@ def calcTrioBiallelic(vcfFN, proband, father, mother, MIN_DEPTH, MIN_QUALITY):
         #calculate the ratios and then plug them into the system of equations
         p, e = calculateRatio(np.mean(freq0011), np.mean(freq1100))
         p2, e2 = calculateRatio(np.median(freq0011), np.median(freq1100))
-        print '\t'.join([str(x) for x in [c, p, 1-p, e, p2, 1-p2, e2]])
+        print('\t'.join([str(x) for x in [c, p, 1-p, e, p2, 1-p2, e2]]))
     
     #calculate the overall ratios
     totalRef0011 = np.array(totalRef0011)
@@ -178,7 +185,7 @@ def calcTrioBiallelic(vcfFN, proband, father, mother, MIN_DEPTH, MIN_QUALITY):
     
     p, e = calculateRatio(np.mean(freq0011), np.mean(freq1100))
     p2, e2 = calculateRatio(np.median(freq0011), np.median(freq1100))
-    print '\t'.join([str(x) for x in ['autosomes', p, 1-p, e, p2, 1-p2, e2]])
+    print('\t'.join([str(x) for x in ['autosomes', p, 1-p, e, p2, 1-p2, e2]]))
     
 if __name__ == '__main__':
     #first set up the arg parser
@@ -192,7 +199,7 @@ if __name__ == '__main__':
     p.add_argument('-q', metavar='quality', dest='quality', type=int, default=DEFAULT_QUAL, help='minimum quality to consider a variant (default: '+str(DEFAULT_QUAL)+')')
     
     #required main arguments
-    p.add_argument('inputVCF', type=vcfutil.readableFile, help='a tabix-formatted VCF file to analyze (data.vcf.gz)')
+    p.add_argument('inputVCF', type=str, help='a tabix-formatted VCF file to analyze (data.vcf.gz)')
     p.add_argument('proband', type=str, help='proband identifier in VCF')
     p.add_argument('father', type=str, help='father identifier in VCF')
     p.add_argument('mother', type=str, help='mother identifier in VCF')

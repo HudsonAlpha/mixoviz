@@ -8,38 +8,38 @@ This script creates a 3x3 multiplot of bi-allelic sites in a trio, one figure pe
 import argparse as ap
 import matplotlib
 matplotlib.use('AGG')
+import matplotlib.style
+matplotlib.style.use('classic')
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import vcf
 
-import vcfutil
-
-def getFields(infoDict):
+def parseInfoField(var, sampleLabel):
     '''
     This function is just a helper to convert all the fields into an expected data type, and handle exceptions by setting to values
-    @param infoDict - the dictionary created from vcfutil.parseInfoField(...)
     @return - tuple (gt, gq, dp , ad)
         gt - genotype (str)
         gq - genotype quality (int)
         dp - total depth, sum(ad) (int)
         ad - allele depth (list of int)
     '''
-    #if infoDict['GT'] == './.' and infoDict.get('GQ', 0) == '.' and infoDict.get('AD', 0) == '.' and infoDict.get('DP', 0) == '.':
-    #    return ('0/0', 20, 20, [20, 0])
+    gt = var.genotype(sampleLabel)['GT']
     
-    gt = infoDict['GT']
+    #GQ is not a guaranteed field
     try:
-        gq = int(infoDict['GQ'])
+        gq = int(var.genotype(sampleLabel)['GQ'])
     except:
         gq = 0
-    try:
-        ad = [int(x) for x in infoDict['AD'].split(',')]
-        dp = sum(ad)
-    except:
-        ad = []
-        dp = 0
     
-    return (gt, gq, dp, ad)
+    #AD is not a guaranteed field, so if it's absent set the depth to 0
+    try:
+        ad = var.genotype(sampleLabel)['AD']
+        tot = sum(ad)
+    except:
+        tot = 0
+    
+    return (gt, gq, tot, ad)
         
 def plotTrioBiallelic(vcfFN, proband, father, mother, outDir, MIN_DEPTH, MIN_QUALITY):
     '''
@@ -56,22 +56,30 @@ def plotTrioBiallelic(vcfFN, proband, father, mother, outDir, MIN_DEPTH, MIN_QUA
     if not os.path.exists(outDir):
         os.makedirs(outDir)
     
-    chromList = vcfutil.getVCFChroms(vcfFN)
+    #get the chromosomes we plan to go through
+    vcfReader = vcf.Reader(filename=vcfFN, compressed=True)
+    chromList = vcfReader.contigs.keys()
+    for sampleLabel in [proband, father, mother]:
+        if (sampleLabel not in vcfReader.samples):
+            raise Exception('Missing required column "'+sampleLabel+'" in VCF file: '+fileName)
     
     #iterate through the VCF
     dataValues = {}
+    foundChromList = []
     for chrom in chromList:
-        it = vcfutil.vcfIterator(vcfFN, chroms=[chrom], sampleLabels=[proband, father, mother])
+        #it = vcfutil.vcfIterator(vcfFN, chroms=[chrom], sampleLabels=[proband, father, mother])
+        try:
+            it = vcfReader.fetch(chrom)
+        except:
+            print('Warning: missing data for chromosome "'+chrom+'"')
+            continue
+        foundChromList.append(chrom)
         for var in it:
             #we only check bi-allelic SNPs
-            if len(var['REF']) == 1 and len(var['ALT']) == 1:
-                proInfo = vcfutil.parseInfoField(var['FORMAT'], var[proband])
-                patInfo = vcfutil.parseInfoField(var['FORMAT'], var[father])
-                matInfo = vcfutil.parseInfoField(var['FORMAT'], var[mother])
-                
-                proGT, proGQ, proDP, proAD = getFields(proInfo)
-                patGT, patGQ, patDP, patAD = getFields(patInfo)
-                matGT, matGQ, matDP, matAD = getFields(matInfo)
+            if len(var.REF) == 1 and len(var.ALT) == 1:
+                proGT, proGQ, proDP, proAD = parseInfoField(var, proband)
+                patGT, patGQ, patDP, patAD = parseInfoField(var, father)
+                matGT, matGQ, matDP, matAD = parseInfoField(var, mother)
                 
                 #make sure everything passes these user-set parameters
                 if (patGQ >= MIN_QUALITY and
@@ -82,11 +90,14 @@ def plotTrioBiallelic(vcfFN, proband, father, mother, outDir, MIN_DEPTH, MIN_QUA
                     proDP >= MIN_DEPTH):
                     
                     k = (chrom, patGT, matGT)
-                    if not dataValues.has_key(k):
+                    if not (k in dataValues):
                         dataValues[k] = ([], [], [])
-                    dataValues[k][0].append(int(var['POS']))
+                    dataValues[k][0].append(int(var.POS))
                     dataValues[k][1].append(proAD[0])
                     dataValues[k][2].append(proAD[1])
+    
+    #replace so we don't error downstream
+    chromList = foundChromList
     
     #this is the order from top left to bottom right of the genotypes in the final figure
     typeOrder = ['0/0', '0/1', '1/1']
@@ -114,19 +125,19 @@ def plotTrioBiallelic(vcfFN, proband, father, mother, outDir, MIN_DEPTH, MIN_QUA
         
     #calculate the ratios so we can figure out what to plot
     if totalAlt0011 == 0.0:
-        print 'WARNING: no 0/0 and 1/1 alleles detected'
+        print('WARNING: no 0/0 and 1/1 alleles detected')
         ratio0011 = 0.0
     else:
         ratio0011 = totalAlt0011/(totalAlt0011+totalRef0011)
     if totalAlt1100 == 0.0:
-        print 'WARNING: no 1/1 and 0/0 alleles detected'
+        print('WARNING: no 1/1 and 0/0 alleles detected')
         ratio1100 = 1.0
     else:
         ratio1100 = 1-totalAlt1100/(totalAlt1100+totalRef1100)
     
     combinedRatio = .5*ratio0011+.5*ratio1100
     derivedRatio = 4-6*combinedRatio
-    print 'Derived ratio=', derivedRatio
+    print('Derived ratio=', derivedRatio)
     
     #TODO: make these horizontal lines into an option
     plotHlines = [[0],
@@ -143,10 +154,10 @@ def plotTrioBiallelic(vcfFN, proband, father, mother, outDir, MIN_DEPTH, MIN_QUA
     
     #this is just figuring out what to print to the screen in a tsv format 
     header = ['chrom']
-    for pType in xrange(0, 3):
-        for mType in xrange(0, 3):
+    for pType in range(0, 3):
+        for mType in range(0, 3):
             header += [typeOrder[pType]+'_'+typeOrder[mType], '', '']
-    print '\t'.join(header)
+    print('\t'.join(header))
     
     #now we can go through each chromosome and plot the results
     for chrom in chromList:
@@ -158,9 +169,9 @@ def plotTrioBiallelic(vcfFN, proband, father, mother, outDir, MIN_DEPTH, MIN_QUA
         plt.suptitle(vcfFN.split('/')[-1]+' '+proband+'['+chrom+']')
         
         #calculate the chromosome length
-        chromLen = vcfutil.SQLENS.get(chrom, 0)
-        for pType in xrange(0, 3):
-            for mType in xrange(0, 3):
+        chromLen = vcfReader.contigs[chrom].length
+        for pType in range(0, 3):
+            for mType in range(0, 3):
                 k = (chrom, typeOrder[pType], typeOrder[mType])
                 chromLen = max(chromLen, dataValues.get(k, ([0], [0], [0]))[0][-1])
         
@@ -170,8 +181,8 @@ def plotTrioBiallelic(vcfFN, proband, father, mother, outDir, MIN_DEPTH, MIN_QUA
         #row values stored what will eventually be printed to the screen for this chromosome
         rowValues = [chrom]
         
-        for pType in xrange(0, 3):
-            for mType in xrange(0, 3):
+        for pType in range(0, 3):
+            for mType in range(0, 3):
                 #get the data for this chromosome and parental GTs
                 k = (chrom, typeOrder[pType], typeOrder[mType])
                 dv = dataValues.get(k, ([], [], []))
@@ -203,7 +214,7 @@ def plotTrioBiallelic(vcfFN, proband, father, mother, outDir, MIN_DEPTH, MIN_QUA
                 else:
                     rowValues += [0, 0, 'undefined']
         
-        print '\t'.join([str(x) for x in rowValues])
+        print('\t'.join([str(x) for x in rowValues]))
                 
         # hide tick and tick label of the big axes
         f.add_subplot(111, frameon=False)
@@ -228,7 +239,7 @@ if __name__ == '__main__':
     p.add_argument('-q', metavar='quality', dest='quality', type=int, default=20, help='minimum quality to consider a variant (default: 20)')
     
     #required main arguments
-    p.add_argument('inputVCF', type=vcfutil.readableFile, help='a tabix-formatted VCF file to analyze (data.vcf.gz)')
+    p.add_argument('inputVCF', type=str, help='a tabix-formatted VCF file to analyze (data.vcf.gz)')
     p.add_argument('proband', type=str, help='proband identifier in VCF')
     p.add_argument('father', type=str, help='father identifier in VCF')
     p.add_argument('mother', type=str, help='mother identifier in VCF')

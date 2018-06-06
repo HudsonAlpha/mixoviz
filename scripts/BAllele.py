@@ -1,6 +1,6 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 '''
-Usage: python BAllele.py -h
+Usage: python3 BAllele.py -h
 
 This script creates scatterplots of the B-allele frequencies, one per chromosome.
 '''
@@ -8,11 +8,13 @@ This script creates scatterplots of the B-allele frequencies, one per chromosome
 import argparse as ap
 import matplotlib
 matplotlib.use('AGG')
+import matplotlib.style
+matplotlib.style.use('classic')
 import matplotlib.pyplot as plt
 import numpy as np
 import os
 import sys
-import vcfutil
+import vcf
     
 def plotChromosomeCalls(vcfFN, sampleLabel, outDir, MIN_DEPTH, MIN_QUAL):
     '''
@@ -28,25 +30,30 @@ def plotChromosomeCalls(vcfFN, sampleLabel, outDir, MIN_DEPTH, MIN_QUAL):
     if not os.path.exists(outDir):
         os.makedirs(outDir)
     
-    chromList = vcfutil.getVCFChroms(vcfFN)
+    vcfReader = vcf.Reader(filename=vcfFN, compressed=True)
+    chromList = vcfReader.contigs.keys()
+    if (sampleLabel not in vcfReader.samples):
+        raise Exception('Missing required column "'+sampleLabel+'" in VCF file: '+fileName)
+    
     for chrom in chromList:
         #this is done on a per-chromosome basis
         xs = []
         ys = []
-        it = vcfutil.vcfIterator(vcfFN, chroms=[chrom], sampleLabels=[sampleLabel])
+        try:
+            it = vcfReader.fetch(chrom)
+        except:
+            print('Warning: missing data for chromosome "'+chrom+'"')
+            continue
         
         for var in it:
-            #this function will split the format and data into an easy-to-use dictionary for us
-            infoDict = vcfutil.parseInfoField(var['FORMAT'], var[sampleLabel])
-            
             #we only care about bi-allelic variants
-            if ',' in var['ALT']:
+            if len(var.ALT) > 1:
                 continue
             
             try:
                 #if any of these things fail, we don't want the variant to be included
-                gq = (int(infoDict['GQ']) if infoDict['GQ'] != '.' else 0)
-                refAD, altAD = [int(x) for x in infoDict['AD'].split(',')]
+                gq = int(var.genotype(sampleLabel)['GQ'])
+                refAD, altAD = var.genotype(sampleLabel)['AD']
             except:
                 #something failed above such as
                 #either GQ or AD is absent
@@ -57,14 +64,14 @@ def plotChromosomeCalls(vcfFN, sampleLabel, outDir, MIN_DEPTH, MIN_QUAL):
                 #make sure we pass the filter spec
                 if (refAD+altAD >= MIN_DEPTH and
                     gq >= MIN_QUAL):
-                    pos = int(var['POS'])
+                    pos = var.POS
                     ratio = 100.0*altAD/(altAD+refAD)
                     xs.append(pos)
                     ys.append(ratio)
         
         #now we plot it
         outFN = outDir+'/'+chrom+'.png'
-        chromLen = max(vcfutil.SQLENS.get(chrom, 0), (xs[-1] if len(xs) > 0 else 0))
+        chromLen = vcfReader.contigs[chrom].length
         
         plt.figure()
         plt.scatter(xs, ys, alpha=.01)
@@ -87,7 +94,7 @@ if __name__ == '__main__':
     p.add_argument('-q', metavar='quality', dest='quality', type=int, default=0, help='minimum quality to consider a variant (default: 0)')
     
     #required main arguments
-    p.add_argument('inputVCF', type=vcfutil.readableFile, help='the input VCF files to analyze')
+    p.add_argument('inputVCF', type=str, help='the input VCF files to analyze')
     p.add_argument('sample', type=str, help='the sample identifier in the vcf')
     p.add_argument('outputDir', type=str, help='the output .png file to write')
     

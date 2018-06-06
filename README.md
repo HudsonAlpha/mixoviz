@@ -6,7 +6,7 @@ with alleles depths (AD tag) and call quality (GQ tag).  We have tested the scri
 ### Requirements
 
 1. Python - tested with Python 2.7
-2. matplotlib, numpy - available via `pip install matplotlib numpy`
+2. matplotlib, numpy, PyVCF - available via `pip install matplotlib numpy pyvcf`
 3. [tabix](http://www.htslib.org/doc/tabix.html) - part of htslib, all VCF inputs are expected as tabix-indexed VCF files
 
 ### Available Scripts
