@@ -18,4 +18,4 @@ For specific instructions on each script, run `python <ScriptName.py> -h`.
 
 ### Reference
 
-Pre-print forthcoming.
+Pre-print on bioRxiv: [Holt, James M. et al. Programmatic Detection of Diploid-Triploid Mixoploidy via Whole Genome Sequencing.](https://www.biorxiv.org/content/early/2018/07/18/371468)
