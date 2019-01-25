@@ -5,12 +5,12 @@ with alleles depths (AD tag) and call quality (GQ tag).  We have tested the scri
 
 ### Requirements
 
-1. Python - tested with Python 2.7
+1. Python - tested with Python 3.6.1
 2. matplotlib, numpy, PyVCF - available via `pip install matplotlib numpy pyvcf`
 3. [tabix](http://www.htslib.org/doc/tabix.html) - part of htslib, all VCF inputs are expected as tabix-indexed VCF files
 
 ### Available Scripts
-For specific instructions on each script, run `python <ScriptName.py> -h`.
+For specific instructions on each script, run `python3 <ScriptName.py> -h`.
 
 1. BAllele.py - Generates a B-allele plot for each chromosome for a single sample (trio not required).
 2. TrioBAllele.py - Generates a 3x3 B-allele plot for each chromosome using trio information to deconvolute the variants.
