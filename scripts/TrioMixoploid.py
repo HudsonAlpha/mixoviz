@@ -48,19 +48,27 @@ def calculateRatio(ratio0011, ratio1100):
         p - the fraction of cells that are diploid given the above ratios (1-p is the fraction triploid)
         e - the error term that allows the system of equation to be solved (i.e. reference/technical bias term)
     '''
-    #logical form      ==>  standard linear alg. form for solving for p and e
-    #f01+e = -p/6+2/3  ==>  p+6e = 4-6*f01
-    #f10+e = p/6+1/3   ==>  -p+6e = 2-6*f10
-    #this stores the constants in front of the unknown variable on the left-hand side
-    systemLHS = [[1, 6],
-                 [-1, 6]]
-    
-    #this stores the calculate constant on the right-hand side based on the observed average allelic ratios
-    systemRHS = [4-6*ratio0011, 2-6*ratio1100]
-    
-    #calculate and return p, e
-    result = np.linalg.solve(systemLHS, systemRHS)
-    return result[0], result[1]
+    if False:
+        #logical form      ==>  standard linear alg. form for solving for p and e
+        #f01+e = -p/6+2/3  ==>  p+6e = 4-6*f01
+        #f10+e = p/6+1/3   ==>  -p+6e = 2-6*f10
+        #this stores the constants in front of the unknown variable on the left-hand side
+        systemLHS = [[1, 6],
+                    [-1, 6]]
+        
+        #this stores the calculate constant on the right-hand side based on the observed average allelic ratios
+        systemRHS = [4-6*ratio0011, 2-6*ratio1100]
+        
+        #calculate and return p, e
+        result = np.linalg.solve(systemLHS, systemRHS)
+        return result[0], result[1]
+    else:
+        #modified approach, test first and then we can clean this code up a bit
+        f01 = ratio0011
+        f10 = ratio1100
+        p = (3*(f01-f10)-1) / (f01-f10-1)
+        e = (2-p) / (3-p) - f01
+        return p, e
 
 def calcTrioBiallelic(vcfFN, proband, father, mother, MIN_DEPTH, MIN_QUALITY):
     '''
